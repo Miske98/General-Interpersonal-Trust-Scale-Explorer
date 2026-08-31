@@ -146,59 +146,35 @@ def load_data():
 st.title("Taxonomy Explorer")
 
 df_full = load_data()
+df = df_full
 
-scales = sorted(df_full["Original label"].unique())
-authors = sorted(df_full["Author"].unique())
 color_map = get_color_map(df_full["New label"].unique())
-
-# ---------------------------------------------------------------------------
-# Universal filters — Scale / Author (applies to all tabs below)
-# ---------------------------------------------------------------------------
-with st.container(border=True):
-    st.subheader("Filters")
-    fcol1, fcol2 = st.columns(2)
-    with fcol1:
-        selected_scales = st.multiselect("Filter by scale", scales, default=[], key="filter_scales")
-    with fcol2:
-        selected_authors = st.multiselect("Filter by author", authors, default=[], key="filter_authors")
-
-df_scales = df_full[df_full["Original label"].isin(selected_scales)] if selected_scales else df_full
-df_authors = df_full[df_full["Author"].isin(selected_authors)] if selected_authors else df_full
-if selected_scales and selected_authors:
-    df = pd.concat([df_scales, df_authors], axis=0, ignore_index=True).drop_duplicates()
-elif selected_scales:
-    df = df_scales
-elif selected_authors:
-    df = df_authors
-else:
-    df = df_full
-
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Number of items", len(df))
-m2.metric("Scale | Author", df["Original label|Author"].nunique())
-m3.metric("New labels", df["New label"].nunique())
-m4.metric("Unique authors", df["Author"].nunique())
 
 # ---------------------------------------------------------------------------
 # Top navigation
 # ---------------------------------------------------------------------------
-tab_taxonomy, tab_search, tab_create = st.tabs(
-    ["GI Taxonomy", "Item Search", "Create your own scale"]
+tab_taxonomy, tab_create, tab_search, tab_about = st.tabs(
+    ["Explore the General Interpersonal Trust Taxonomy", "Create your own scale", "Item Search", "About"]
 )
 
 # ---------------------------------------------------------------------------
-# Tab 1 — GI Taxonomy
+# Tab 1 — Explore the General Interpersonal Trust Taxonomy
 # ---------------------------------------------------------------------------
 with tab_taxonomy:
-    st.title("GI Taxonomy")
+    st.title("Explore the General Interpersonal Trust Taxonomy")
 
     st.markdown(
         """
-        Use this tab to explore how items from a specific **scale** are distributed across the
-        **General Interpersonal Trust** taxonomy labels. Pick a New Label below to see which
-        scale/author combinations contribute to it, ranked by percentage of their items that fall
-        under that label. Use the **Filters** panel above to narrow the dataset by scale or author
-        before ranking.
+        The taxonomy includes the 17 construct labels identified across the GI trust literature and
+        shows which items from the 38 evaluated scales are most strongly associated with each label.
+
+        You can filter items based on their newly assigned construct label. For each item, the table
+        below shows where the item originated, including its original label and author, allowing you
+        to compare its original classification with its position in the taxonomy. The accompanying
+        graph shows how many items from each original scale were assigned to each new construct label.
+
+        All item-to-label assignments are based on semantic similarity, calculated using LLM-generated
+        embeddings and cosine similarity.
         """
     )
 
@@ -333,11 +309,20 @@ with tab_search:
 # ---------------------------------------------------------------------------
 with tab_create:
     st.title("Create your own scale")
-    st.caption(
-        "Pick one or more New Labels, choose how many items you want from each and the minimum "
-        "cosine similarity to require for that label, then add a random sample. You can also add "
-        "individual items from the **Item Search** tab. Remove anything you don't want and download "
-        "the final list as CSV."
+
+    st.markdown(
+        """
+        To create your own scale, select one or more New Labels, choose the number of items you want
+        from each, and set the minimum cosine similarity required for each label. You can then add a
+        random sample of items meeting your criteria. Individual items can also be added manually from
+        the Item Search tab.
+
+        Once you have selected your items, you can remove any you do not want and download the final
+        item list as a CSV file.
+
+        **Important:** Newly created scales should undergo appropriate psychometric validation before
+        being used in research.
+        """
     )
 
     has_cosine = "Cosine similarity" in df.columns
@@ -417,3 +402,24 @@ with tab_create:
             if st.button("Clear my scale"):
                 st.session_state.my_scale_indices = set()
                 st.rerun()
+
+# ---------------------------------------------------------------------------
+# Tab 4 — About
+# ---------------------------------------------------------------------------
+with tab_about:
+    st.title("About")
+
+    st.markdown(
+        """
+        This tool was developed as part of the research project “Do Trust Scales Measure the Same
+        Construct? An Investigation of Jingle-Jangle Fallacies in General Interpersonal Trust Scales.”
+
+        The tool provides an interactive way to explore the General Interpersonal Trust Taxonomy
+        developed in the project. It allows researchers to examine relationships between existing
+        trust measures, construct labels, and individual items, as well as to explore and select items
+        for future scale development.
+
+        For details about the methodology, analyses, and interpretation of the taxonomy, please
+        consult the accompanying research paper.
+        """
+    )
