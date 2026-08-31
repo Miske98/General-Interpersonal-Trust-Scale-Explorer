@@ -248,6 +248,43 @@ with tab_taxonomy:
             )
 
 # ---------------------------------------------------------------------------
+# Shared state: the scale the user is building ("Create your own scale")
+# ---------------------------------------------------------------------------
+if "my_scale_indices" not in st.session_state:
+    st.session_state.my_scale_indices = set()
+
+OUTPUT_COLS = ["Text", "Original label", "Author", "New label", "Cosine similarity"]
+
+
+def add_rows_to_scale(rows_df):
+    """Add rows (by their df_full index) to the user's created scale."""
+    st.session_state.my_scale_indices.update(rows_df.index.tolist())
+
+
+def remove_row_from_scale(idx):
+    st.session_state.my_scale_indices.discard(idx)
+
+
+def get_my_scale_df():
+    idx = [i for i in st.session_state.my_scale_indices if i in df_full.index]
+    return df_full.loc[idx, OUTPUT_COLS] if idx else pd.DataFrame(columns=OUTPUT_COLS)
+
+
+def download_scale_button(scale_df, key_suffix=""):
+    if scale_df.empty:
+        return
+    out = scale_df.copy()
+    out = out.rename(columns={"Cosine similarity": "Cosine similarity with New label"})
+    st.download_button(
+        "Download my scale as CSV",
+        out.to_csv(index=False).encode("utf-8"),
+        file_name="my_scale.csv",
+        mime="text/csv",
+        key=f"download_scale_{key_suffix}",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tab 2 — Item Search
 # ---------------------------------------------------------------------------
 with tab_search:
@@ -264,11 +301,26 @@ with tab_search:
         else:
             st.write(f"**{len(results)}** out of {len(df)} items have your keyword (Case sensitive).")
 
-        display_df = results[["Original label|Author", "New label", "Text"]].reset_index(drop=True)
-        st.table(display_df)
+        st.caption("Add any item straight to your custom scale (see the **Create your own scale** tab).")
 
+        for idx, row in results.iterrows():
+            already_added = idx in st.session_state.my_scale_indices
+            with st.container(border=True):
+                c_text, c_btn = st.columns([5, 1])
+                with c_text:
+                    st.markdown(f"**{row['Original label|Author']}** · *{row['New label']}*")
+                    st.write(row["Text"])
+                with c_btn:
+                    if already_added:
+                        st.button("Added ✓", key=f"add_{idx}", disabled=True, use_container_width=True)
+                    else:
+                        if st.button("Add to my scale", key=f"add_{idx}", use_container_width=True):
+                            add_rows_to_scale(results.loc[[idx]])
+                            st.rerun()
+
+        display_df = results[["Original label|Author", "New label", "Text"]].reset_index(drop=True)
         st.download_button(
-            "Download as CSV",
+            "Download search results as CSV",
             display_df.to_csv(index=False).encode("utf-8"),
             file_name=f"search_results_{query}.csv",
             mime="text/csv",
@@ -277,33 +329,25 @@ with tab_search:
         st.info("Type something")
 
 # ---------------------------------------------------------------------------
-# Tab 3 — Create your own scale (Randomizer)
+# Tab 3 — Create your own scale
 # ---------------------------------------------------------------------------
 with tab_create:
     st.title("Create your own scale")
+    st.caption(
+        "Pick one or more New Labels, choose how many items you want from each and the minimum "
+        "cosine similarity to require for that label, then add a random sample. You can also add "
+        "individual items from the **Item Search** tab. Remove anything you don't want and download "
+        "the final list as CSV."
+    )
+
+    has_cosine = "Cosine similarity" in df.columns
 
     if df.empty:
         st.warning("Looks like you filtered everything out")
     else:
-        has_cosine = "Cosine similarity" in df.columns
-
-        if has_cosine:
-            cos_threshold = st.slider(
-                "Minimum cosine similarity",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.0,
-                step=0.01,
-                help="Only items with a cosine similarity greater than or equal to this value will be considered.",
-            )
-            df_cos = df[df["Cosine similarity"] >= cos_threshold]
-        else:
-            st.info("Column 'Cosine similarity' not found — threshold filter is disabled.")
-            df_cos = df
-
         pick_labels = st.multiselect(
             "Pick New Label(s)",
-            sorted(df_cos["New label"].unique()),
+            sorted(df["New label"].unique()),
             default=[],
             key="sample_labels",
         )
@@ -311,30 +355,65 @@ with tab_create:
         if not pick_labels:
             st.info("Pick at least one New Label above to configure sample sizes.")
         else:
-            n_samples_per_label = {}
-            cols = st.columns(min(len(pick_labels), 4))
-            for i, label in enumerate(pick_labels):
-                subset_size = len(df_cos[df_cos["New label"] == label])
-                with cols[i % len(cols)]:
-                    n_samples_per_label[label] = st.slider(
-                        label,
+            label_settings = {}
+            for label in pick_labels:
+                st.markdown(f"**{label}**")
+                subset_all = df[df["New label"] == label]
+                lc1, lc2 = st.columns(2)
+                with lc1:
+                    if has_cosine:
+                        min_cos = st.slider(
+                            "Minimum cosine similarity",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.0,
+                            step=0.01,
+                            key=f"min_cos_{label}",
+                        )
+                    else:
+                        min_cos = None
+                subset = subset_all[subset_all["Cosine similarity"] >= min_cos] if min_cos is not None else subset_all
+                with lc2:
+                    n_items = st.slider(
+                        "Number of items",
                         1,
-                        max(1, subset_size),
-                        min(1, subset_size),
-                        key=f"sample_size_{label}",
+                        max(1, len(subset)),
+                        min(1, len(subset)) if len(subset) else 1,
+                        key=f"n_items_{label}",
+                        disabled=subset.empty,
                     )
+                if subset.empty:
+                    st.info(f"No items for '{label}' meet that cosine similarity threshold.")
+                label_settings[label] = (subset, n_items)
+                st.markdown("---")
 
-            if st.button("New random sample"):
+            if st.button("Add random sample to my scale"):
+                for label, (subset, n_items) in label_settings.items():
+                    if not subset.empty:
+                        sample = subset.sample(min(n_items, len(subset)), random_state=None)
+                        add_rows_to_scale(sample)
                 st.rerun()
 
-            for label in pick_labels:
-                subset = df_cos[df_cos["New label"] == label]
-                st.markdown(f"#### {label}")
-                if subset.empty:
-                    st.info("No items")
-                    continue
-                sample = subset.sample(min(n_samples_per_label[label], len(subset)), random_state=None)
-                for _, row in sample.iterrows():
-                    with st.container(border=True):
-                        st.markdown(f"**{row['Original label|Author']}**")
+        st.subheader("Your scale")
+        my_scale_df = get_my_scale_df()
+
+        if my_scale_df.empty:
+            st.info("Your scale is empty. Add a random sample above or add items from Item Search.")
+        else:
+            st.write(f"**{len(my_scale_df)}** items in your scale.")
+            for idx, row in my_scale_df.iterrows():
+                with st.container(border=True):
+                    c_text, c_btn = st.columns([5, 1])
+                    with c_text:
+                        st.markdown(f"**{row['Original label']} | {row['Author']}** · *{row['New label']}*")
                         st.write(row["Text"])
+                    with c_btn:
+                        if st.button("Remove", key=f"remove_{idx}", use_container_width=True):
+                            remove_row_from_scale(idx)
+                            st.rerun()
+
+            download_scale_button(my_scale_df, key_suffix="create_tab")
+
+            if st.button("Clear my scale"):
+                st.session_state.my_scale_indices = set()
+                st.rerun()
