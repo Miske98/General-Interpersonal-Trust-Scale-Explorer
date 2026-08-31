@@ -123,7 +123,7 @@ def trim_columns(df):
 
 
 # ---------------------------------------------------------------------------
-# Data upload — main CSV
+# Data upload — main dataset (GI TRUST TAXONOMY sheet)
 # ---------------------------------------------------------------------------
 @st.cache_data
 def load_data():
@@ -143,273 +143,114 @@ def load_data():
     return df
 
 
-# ---------------------------------------------------------------------------
-# Data upload — ProjectTrust_labelanddefinition.xlsx (Sheet1)
-# ---------------------------------------------------------------------------
-LABELDEF_COLS = [
-    "Scale name",
-    "Factor vs scale",
-    "Scale label",
-    "Definition",
-    "Factors",
-    "Charachteristic",
-    "Framwork",
-    "Alternative name",
-]
-
-
-@st.cache_data
-def load_labeldef():
-    df = pd.read_excel('./Data/ProjectTrust_labelanddefinition.xlsx', sheet_name="Sheet1")
-    df = trim_columns(df)
-    if "Author" not in df.columns:
-        st.error("Column 'Author' missing in ProjectTrust_labelanddefinition.xlsx")
-        st.stop()
-    df["Author"] = df["Author"].astype(str).str.strip()
-    for col in LABELDEF_COLS:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-    return df
-
-
-# ---------------------------------------------------------------------------
-# Data upload — General Interpersonal Trust Taxonomy and other.xlsx
-# (sheet: JINGLE JANGLE FALLACIES)
-# ---------------------------------------------------------------------------
-JJ_COLS = [
-    "Original Label 1",
-    "Author 1",
-    "Scale 1",
-    "Original Label 2",
-    "Scale 2",
-    "Author 2",
-    "Type of fallacy",
-]
-
-
-@st.cache_data
-def load_jingle_jangle():
-    df = pd.read_excel('./Data/General Interpersonal Trust Taxonomy and other.xlsx', sheet_name="JINGLE JANGLE FALLACIES")
-    df = trim_columns(df)
-    for col in ["Author 1", "Author 2"] + JJ_COLS:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-    return df
-
-
 st.title("Taxonomy Explorer")
 
 df_full = load_data()
-df_labeldef = load_labeldef()
-df_jinglejangle = load_jingle_jangle()
 
+scales = sorted(df_full["Original label"].unique())
 authors = sorted(df_full["Author"].unique())
-labels = sorted(df_full["Original label"].unique())
 color_map = get_color_map(df_full["New label"].unique())
 
 # ---------------------------------------------------------------------------
-# Helper: render the single-author info panel
+# Universal filters — Scale / Author (applies to all tabs below)
 # ---------------------------------------------------------------------------
-def render_author_info_panel(author):
-    st.markdown("---")
-    st.header(f"Author: {author}")
+with st.container(border=True):
+    st.subheader("Filters")
+    fcol1, fcol2 = st.columns(2)
+    with fcol1:
+        selected_scales = st.multiselect("Filter by scale", scales, default=[], key="filter_scales")
+    with fcol2:
+        selected_authors = st.multiselect("Filter by author", authors, default=[], key="filter_authors")
 
-    # --- ProjectTrust_labelanddefinition.xlsx ---
-    matches = df_labeldef[df_labeldef["Author"] == author]
-    if matches.empty:
-        st.info(f"No entries found for '{author}' in ProjectTrust_labelanddefinition.xlsx, sheet1.")
-    else:
-        st.subheader("Scale / Label information")
-        for _, row in matches.iterrows():
-            with st.container(border=True):
-                for col in LABELDEF_COLS:
-                    if col not in matches.columns:
-                        continue
-                    val = row[col]
-                    if pd.isna(val) or str(val).strip() == "" or str(val).strip().lower() == "nan":
-                        continue
-                    st.markdown(f"**{col}:** {val}")
+df_scales = df_full[df_full["Original label"].isin(selected_scales)] if selected_scales else df_full
+df_authors = df_full[df_full["Author"].isin(selected_authors)] if selected_authors else df_full
+if selected_scales and selected_authors:
+    df = pd.concat([df_scales, df_authors], axis=0, ignore_index=True).drop_duplicates()
+elif selected_scales:
+    df = df_scales
+elif selected_authors:
+    df = df_authors
+else:
+    df = df_full
 
-    # --- General Interpersonal Trust Taxonomy and other.xlsx ---
-    st.subheader("Jingle-Jangle Fallacies")
-    cols_present = [c for c in JJ_COLS if c in df_jinglejangle.columns]
-    mask = pd.Series(False, index=df_jinglejangle.index)
-    if "Author 1" in df_jinglejangle.columns:
-        mask |= df_jinglejangle["Author 1"] == author
-    if "Author 2" in df_jinglejangle.columns:
-        mask |= df_jinglejangle["Author 2"] == author
-    jj_matches = df_jinglejangle[mask]
-
-    if jj_matches.empty:
-        st.info(f"No jingle-jangle fallacy entries found for {author}.")
-    else:
-        for _, row in jj_matches.iterrows():
-            with st.container(border=True):
-                c1, c2, c3, c_mid, c4, c5, c6 = st.columns([1, 1, 1, 1, 1, 1, 1])
-
-                def show(container, col_name):
-                    if col_name in cols_present:
-                        val = row[col_name]
-                        if not (pd.isna(val) or str(val).strip() == "" or str(val).strip().lower() == "nan"):
-                            container.markdown(f"**{col_name}**\n\n{val}")
-
-                show(c1, "Original Label 1")
-                show(c2, "Author 1")
-                show(c3, "Scale 1")
-
-                if "Type of fallacy" in cols_present:
-                    val = row["Type of fallacy"]
-                    if not (pd.isna(val) or str(val).strip() == "" or str(val).strip().lower() == "nan"):
-                        c_mid.markdown(f"<div style='text-align:center'><b>Type of fallacy</b><br>{val}</div>", unsafe_allow_html=True)
-
-                show(c4, "Original Label 2")
-                show(c5, "Scale 2")
-                show(c6, "Author 2")
-
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Number of items", len(df))
+m2.metric("Scale | Author", df["Original label|Author"].nunique())
+m3.metric("New labels", df["New label"].nunique())
+m4.metric("Unique authors", df["Author"].nunique())
 
 # ---------------------------------------------------------------------------
-# Top navigation (replaces sidebar)
+# Top navigation
 # ---------------------------------------------------------------------------
-tab_overview, tab_taxonomy, tab_search, tab_extra = st.tabs(
-    ["Overview (stacked bar)", "GI Trust Taxonomy", "Item Search", "Extra"]
+tab_taxonomy, tab_search, tab_create = st.tabs(
+    ["GI Taxonomy", "Item Search", "Create your own scale"]
 )
 
 # ---------------------------------------------------------------------------
-# Page 1 - Stacked barh (the ONLY page affected by author/label filters)
-# ---------------------------------------------------------------------------
-with tab_overview:
-    st.title("Original Label | Author grouped by New Label")
-
-    with st.container(border=True):
-        st.subheader("Filters")
-        fcol1, fcol2 = st.columns(2)
-        with fcol1:
-            selected_authors = st.multiselect("Filter by author", authors, default=[], key="ov_authors")
-        with fcol2:
-            selected_labels = st.multiselect("Filter by label", labels, default=[], key="ov_labels")
-
-    df_authors = df_full[df_full["Author"].isin(selected_authors)] if selected_authors else df_full
-    df_labels = df_full[df_full["Original label"].isin(selected_labels)] if selected_labels else df_full
-    if selected_labels and selected_authors:
-        df_ov = pd.concat([df_authors, df_labels], axis=0, ignore_index=True).drop_duplicates()
-    elif selected_labels:
-        df_ov = df_labels
-    elif selected_authors:
-        df_ov = df_authors
-    else:
-        df_ov = df_full
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Number of items", len(df_ov))
-    m2.metric("Original label | Author", df_ov["Original label|Author"].nunique())
-    m3.metric("New labels", df_ov["New label"].nunique())
-    m4.metric("Unique authors", df_ov["Author"].nunique())
-
-    st.caption("Hover for details")
-
-    if df_ov.empty:
-        st.warning("Looks like you filtered everything out")
-    else:
-        table_pct = pd.crosstab(df_ov["Original label|Author"], df_ov["New label"], normalize="index")
-        table_cnt = pd.crosstab(df_ov["Original label|Author"], df_ov["New label"])
-
-        fig = go.Figure()
-        for label in table_pct.columns:
-            pct = table_pct[label] * 100
-            cnt = table_cnt[label]
-            fig.add_trace(
-                go.Bar(
-                    y=table_pct.index,
-                    x=table_pct[label],
-                    orientation="h",
-                    name=label,
-                    text=[label if v > 0 else "" for v in table_pct[label]],
-                    textposition="inside",
-                    insidetextanchor="middle",
-                    constraintext="both",
-                    textfont=dict(color="white", size=11),
-                    marker=dict(color=color_map[label], line=dict(color="black", width=0.6)),
-                    customdata=list(zip([label] * len(table_pct), pct, cnt)),
-                    hovertemplate=(
-                        "<b>New Label:</b> %{customdata[0]}<br>"
-                        "<b>Percent:</b> %{customdata[1]:.1f}%<br>"
-                        "<b>No. of items:</b> %{customdata[2]}"
-                        "<extra></extra>"
-                    ),
-                    showlegend=False,
-                )
-            )
-
-        fig.update_layout(
-            barmode="stack",
-            height=max(600, 28 * len(table_pct)),
-            xaxis=dict(visible=False),
-            yaxis=dict(title="Original label | Author", automargin=True),
-            template="plotly_white",
-            margin=dict(l=10, r=10, t=30, b=10),
-            font=dict(family="Times New Roman", size=13),
-        )
-        fig = lock_chart(fig)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-        # ---- Single-author info panel ----
-        if len(selected_authors) == 1:
-            render_author_info_panel(selected_authors[0])
-
-# ---------------------------------------------------------------------------
-# Page 2 - Filter by New Label (uses the FULL, unfiltered dataset)
+# Tab 1 — GI Taxonomy
 # ---------------------------------------------------------------------------
 with tab_taxonomy:
-    df = df_full
-    st.title("Ranking Original label | Author by chosen New Label")
+    st.title("GI Taxonomy")
 
-    selected_label = st.selectbox("Select New Label", sorted(df["New label"].unique()))
+    st.markdown(
+        """
+        Use this tab to explore how items from a specific **scale** are distributed across the
+        **General Interpersonal Trust** taxonomy labels. Pick a New Label below to see which
+        scale/author combinations contribute to it, ranked by percentage of their items that fall
+        under that label. Use the **Filters** panel above to narrow the dataset by scale or author
+        before ranking.
+        """
+    )
 
-    table_pct = pd.crosstab(df["Original label|Author"], df["New label"], normalize="index")
-    table_cnt = pd.crosstab(df["Original label|Author"], df["New label"])
-
-    if selected_label not in table_pct.columns:
+    if df.empty:
         st.warning("Looks like you filtered everything out")
     else:
-        filtered_pct = table_pct[selected_label]
-        filtered_pct = filtered_pct[filtered_pct > 0].sort_values(ascending=True)  # ascending -> najveci na vrhu
-        filtered_cnt = table_cnt[selected_label].loc[filtered_pct.index]
+        selected_label = st.selectbox("Select New Label", sorted(df["New label"].unique()))
 
-        fig = go.Figure(
-            go.Bar(
-                y=filtered_pct.index,
-                x=filtered_pct.values * 100,
-                orientation="h",
-                marker=dict(color=color_map[selected_label], line=dict(color="black", width=0.6)),
-                customdata=filtered_cnt.values,
-                hovertemplate="<b>%{y}</b><br>%{x:.1f}%% (%{customdata} items)<extra></extra>",
+        table_pct = pd.crosstab(df["Original label|Author"], df["New label"], normalize="index")
+        table_cnt = pd.crosstab(df["Original label|Author"], df["New label"])
+
+        if selected_label not in table_pct.columns:
+            st.warning("Looks like you filtered everything out")
+        else:
+            filtered_pct = table_pct[selected_label]
+            filtered_pct = filtered_pct[filtered_pct > 0].sort_values(ascending=True)  # ascending -> najveci na vrhu
+            filtered_cnt = table_cnt[selected_label].loc[filtered_pct.index]
+
+            fig = go.Figure(
+                go.Bar(
+                    y=filtered_pct.index,
+                    x=filtered_pct.values * 100,
+                    orientation="h",
+                    marker=dict(color=color_map[selected_label], line=dict(color="black", width=0.6)),
+                    customdata=filtered_cnt.values,
+                    hovertemplate="<b>%{y}</b><br>%{x:.1f}%% (%{customdata} items)<extra></extra>",
+                )
             )
-        )
-        fig.update_layout(
-            height=max(400, 28 * len(filtered_pct)),
-            xaxis=dict(title="Percent (%)"),
-            yaxis=dict(title="Original label | Author", automargin=True),
-            template="plotly_white",
-            font=dict(family="Times New Roman", size=13),
-            margin=dict(l=10, r=10, t=30, b=10),
-        )
-        fig = lock_chart(fig)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            fig.update_layout(
+                height=max(400, 28 * len(filtered_pct)),
+                xaxis=dict(title="Percent (%)"),
+                yaxis=dict(title="Scale | Author", automargin=True),
+                template="plotly_white",
+                font=dict(family="Times New Roman", size=13),
+                margin=dict(l=10, r=10, t=30, b=10),
+            )
+            fig = lock_chart(fig)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
-        csv_out = df[df["New label"] == selected_label].drop(columns=['Original label|Author', 'New label']).rename(columns={'Cosine similarity': f'Cosine similarity with {selected_label}'})
-        st.dataframe(csv_out, use_container_width=True, height=400, hide_index=True)
-        st.download_button(
-            "Download as CSV",
-            csv_out.to_csv(index=False).encode("utf-8"),
-            file_name=f"{selected_label}.csv",
-            mime="text/csv",
-        )
+            csv_out = df[df["New label"] == selected_label].drop(columns=['Original label|Author', 'New label']).rename(columns={'Cosine similarity': f'Cosine similarity with {selected_label}'})
+            st.dataframe(csv_out, use_container_width=True, height=400, hide_index=True)
+            st.download_button(
+                "Download as CSV",
+                csv_out.to_csv(index=False).encode("utf-8"),
+                file_name=f"{selected_label}.csv",
+                mime="text/csv",
+            )
 
 # ---------------------------------------------------------------------------
-# Page 3 — Text search through items (uses the FULL, unfiltered dataset)
+# Tab 2 — Item Search
 # ---------------------------------------------------------------------------
 with tab_search:
-    df = df_full
     st.title("Keyword search")
 
     query = st.text_input("Type here")
@@ -436,62 +277,33 @@ with tab_search:
         st.info("Type something")
 
 # ---------------------------------------------------------------------------
-# Page 4 — Extra (uses the FULL, unfiltered dataset)
+# Tab 3 — Create your own scale (Randomizer)
 # ---------------------------------------------------------------------------
-with tab_extra:
-    df = df_full
-    st.title("Extras")
+with tab_create:
+    st.title("Create your own scale")
 
-    subtab1, subtab2, subtab3 = st.tabs(
-        ["Distribution", "Heatmap Original vs New", "Randomizer"]
-    )
+    if df.empty:
+        st.warning("Looks like you filtered everything out")
+    else:
+        has_cosine = "Cosine similarity" in df.columns
 
-    # --- Tab 1: New Label ---
-    with subtab1:
-        st.subheader("No. of Items for New Label")
-        counts = df["New label"].value_counts().sort_values(ascending=True)
-        fig = go.Figure(
-            go.Bar(
-                y=counts.index,
-                x=counts.values,
-                orientation="h",
-                marker=dict(color=[color_map[l] for l in counts.index], line=dict(color="black", width=0.6)),
-                hovertemplate="<b>%{y}</b><br>%{x} items<extra></extra>",
+        if has_cosine:
+            cos_threshold = st.slider(
+                "Minimum cosine similarity",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.0,
+                step=0.01,
+                help="Only items with a cosine similarity greater than or equal to this value will be considered.",
             )
-        )
-        fig.update_layout(
-            height=max(400, 28 * len(counts)),
-            template="plotly_white",
-            xaxis_title="No. of Items",
-            font=dict(family="Times New Roman", size=13),
-        )
-        fig = lock_chart(fig)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    # --- Tab 2: Heatmap ---
-    with subtab2:
-        st.subheader("Relabeling Contingency Heatmap")
-        heat_table = pd.crosstab(df["Original label"], df["New label"])
-        fig = px.imshow(
-            heat_table,
-            aspect="auto",
-            color_continuous_scale="Reds",
-            labels=dict(x="New Label", y="Original Label", color="Items"),
-        )
-        fig.update_layout(
-            height=max(500, 22 * len(heat_table)),
-            font=dict(family="Times New Roman", size=12),
-        )
-        fig = lock_chart(fig)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    # --- Tab 3: Random sampler ---
-    with subtab3:
-        st.subheader("Random Item Sample")
+            df_cos = df[df["Cosine similarity"] >= cos_threshold]
+        else:
+            st.info("Column 'Cosine similarity' not found — threshold filter is disabled.")
+            df_cos = df
 
         pick_labels = st.multiselect(
             "Pick New Label(s)",
-            sorted(df["New label"].unique()),
+            sorted(df_cos["New label"].unique()),
             default=[],
             key="sample_labels",
         )
@@ -502,7 +314,7 @@ with tab_extra:
             n_samples_per_label = {}
             cols = st.columns(min(len(pick_labels), 4))
             for i, label in enumerate(pick_labels):
-                subset_size = len(df[df["New label"] == label])
+                subset_size = len(df_cos[df_cos["New label"] == label])
                 with cols[i % len(cols)]:
                     n_samples_per_label[label] = st.slider(
                         label,
@@ -516,7 +328,7 @@ with tab_extra:
                 st.rerun()
 
             for label in pick_labels:
-                subset = df[df["New label"] == label]
+                subset = df_cos[df_cos["New label"] == label]
                 st.markdown(f"#### {label}")
                 if subset.empty:
                     st.info("No items")
